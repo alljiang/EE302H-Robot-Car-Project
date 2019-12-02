@@ -4,8 +4,8 @@
 //  Line IR Sensors: QRE1113
 
 // HIGH LEVEL
-char EXIT = 'B';
-char currentExit = 64;
+int EXIT = 1;  // A: 1  B: 3  C: 5
+int currentExit = 0;
 
 // DIO
 int PIN_DIO_PWMA = 5; // Motor Driver, Motor Left PWM
@@ -26,8 +26,8 @@ int PIN_ANALOG_LINE_LEFT = 3;  // Line IR, Vout
 
 //  Threshold values for sensors, trial/error defined
 int IR_WALL_THRESHOLD = 200;
-int IR_WALL_NEAR_THRESHOLD = 500;
-int IR_LINE_THRESHOLD = 850;
+int IR_WALL_NEAR_THRESHOLD = 400;
+int IR_LINE_THRESHOLD = 800;
 
 // Control states
 boolean followLine;  // follows line if true, follows wall otherwise
@@ -106,7 +106,19 @@ void loop() {
   double motorRightOutput = 0;
 
   if(followLine) {
-  
+    if(followRightCloseTime < millis() && followLeftCloseTime < millis() && turnedAround && !completedExit2) {
+      if(EXIT == 3) {
+        drive(-0.4, 0.4);
+        if(!lineMiddle) return;
+        followLeftCloseTime = millis() + 5000;
+      }
+      else {
+        drive(0.4, -0.4);
+        if(!lineMiddle) return;
+        followRightCloseTime = millis() + 5000;
+      }
+      completedExit2 = true;
+    }
     if(followRightCloseTime > millis()) {
       if(lineMiddle) {
         motorLeftOutput = 0.8;
@@ -130,7 +142,7 @@ void loop() {
       lastLargeCorrectionMillis = millis();
     }
     else {
-      if(completedExit1 && completedExit2 && !lineLeft && !lineMiddle && !lineRight && wallLeft && wallRight) {
+      if(completedExit2 && !lineLeft && !lineMiddle && !lineRight && wallLeft && wallRight) {
         followWall = true;
         followLine = false;
         return;
@@ -161,29 +173,32 @@ void loop() {
         error -= 1;
       }
 
-      if(completedExit1 && !completedExit2 && wallFrontRaw && !turnedAround) {
+      if(completedExit1 && !completedExit2 && wallFront && !turnedAround) {
         turnedAround = true;
         Serial.println("Turning around");
-        if(EXIT % 2 == 0) {
-          // exit is A or C, right side
-          drive(-0.3, 0.3);
+        if(EXIT == 3) {
+          drive(-0.35, 0.35);
           delay(300);
           while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) {}
           drive(0, 0);
           
-          followRightCloseTime = millis() + 2000;
+          followRightCloseTime = millis() + 2500;
         }
         else {
-          // exit is B, left side
-          followLeftCloseTime = millis() + 2000;
+          drive(0.3, -0.3);
+          delay(300);
+          while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD) {}
+          drive(0, 0);
+          
+          followLeftCloseTime = millis() + 2500;
         }
+        return;
       }
   
-      if(!completedExit2 && turnWindowCloseTime < millis()) {
-        exiting = false;
+      if(!turnedAround && !completedExit2 && turnWindowCloseTime < millis()) {
         if(!testingExit && lines == 2) {
           drive(0.3, 0.3);
-          delay(500);
+          delay(700);
           drive(0, 0);
           testingExit = true;
         }
@@ -199,13 +214,14 @@ void loop() {
             LEDFlash(100, 1);
           }
           else {
-            Serial.println("Exit");
+            Serial.println("Exit: " + String(currentExit));
             currentExit++;
             if(currentExit == EXIT) {
+              LEDFlash(3000, 1);
               drive(-0.3, -0.3);
               delay(1000);
               drive(0, 0);
-              if(EXIT % 2 == 1) {
+              if(EXIT != 3) {
                 // exit is A or C, right side
                 followRightCloseTime = millis() + 3000;
                 Serial.println("GOING RIGHT");
@@ -217,9 +233,9 @@ void loop() {
               }
               if(!completedExit1) completedExit1 = true; 
               else completedExit2 = true;
-              EXIT++;
+              EXIT += 2;
+              currentExit = EXIT - 1;
             }
-            LEDFlash(3000, 1);
           }
         } 
         
@@ -235,7 +251,9 @@ void loop() {
       double D = kD * (lastLineError - error);
   
       double output = P + D;
-  
+
+      
+
       motorLeftOutput += -output;
       motorRightOutput += output;
   
@@ -266,9 +284,10 @@ void loop() {
     motorRightOutput += output;
   }
   db += "--------------------------------------------\n";
+  
 //  Serial.print(db);
-
   drive(motorLeftOutput, motorRightOutput);
+//  delay(500);
 }
 
 float motorMultiplier = 1;
