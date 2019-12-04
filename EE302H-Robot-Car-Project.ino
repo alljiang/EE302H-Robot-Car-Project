@@ -28,6 +28,8 @@ int PIN_ANALOG_LINE_LEFT = 3;  // Line IR, Vout
 int IR_WALL_THRESHOLD = 200;
 int IR_WALL_NEAR_THRESHOLD = 400;
 int IR_LINE_THRESHOLD = 800;
+int IR_RED_LOW_THRESHOLD = 400;
+int IR_RED_HIGH_THRESHOLD = 600;
 
 // Control states
 boolean followLine;  // follows line if true, follows wall otherwise
@@ -38,6 +40,7 @@ boolean followWall;
 boolean completedExit1;
 boolean completedExit2;
 boolean turnedAround;
+boolean finishedTunnel;
 
 long turnWindowCloseTime = millis();
 long followRightCloseTime = millis();
@@ -106,16 +109,23 @@ void loop() {
   double motorRightOutput = 0;
 
   if(followLine) {
+    if(completedTunnel) {
+      if(lineLeftRaw < IR_RED_HIGH_THRESHOLD && lineLeftRaw > IR_RED_LOW_THRESHOLD &&
+          lineMiddleRaw < IR_RED_HIGH_THRESHOLD && lineMiddleRaw > IR_RED_LOW_THRESHOLD &&
+          lineRightRaw < IR_RED_HIGH_THRESHOLD && lineRightRaw > IR_RED_LOW_THRESHOLD) {
+          drive(0,0);
+      }
+    }
     if(followRightCloseTime < millis() && followLeftCloseTime < millis() && turnedAround && !completedExit2) {
       if(EXIT == 3) {
         drive(-0.4, 0.4);
         if(!lineMiddle) return;
-        followLeftCloseTime = millis() + 5000;
+        followLeftCloseTime = millis() + 7000;
       }
       else {
         drive(0.4, -0.4);
         if(!lineMiddle) return;
-        followRightCloseTime = millis() + 5000;
+        followRightCloseTime = millis() + 7000;
       }
       completedExit2 = true;
     }
@@ -252,8 +262,6 @@ void loop() {
   
       double output = P + D;
 
-      
-
       motorLeftOutput += -output;
       motorRightOutput += output;
   
@@ -261,6 +269,16 @@ void loop() {
     }
   }
   else if(followWall) {
+
+    if(!wallLeft || !wallRight) {
+      // sweep left then right until you see the line
+      long sweepLeftEndTime = millis() + 500;
+      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);
+      while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD) drive(0.3, 0.5);
+      finishedTunnel = true;
+      followWall = false;
+      followLine = true;
+    }
 
     db += "wall\n";
 
