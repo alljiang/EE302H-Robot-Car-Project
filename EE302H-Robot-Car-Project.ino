@@ -40,7 +40,7 @@ boolean followWall;
 boolean completedExit1;
 boolean completedExit2;
 boolean turnedAround;
-boolean finishedTunnel;
+boolean completedTunnel;
 
 long turnWindowCloseTime = millis();
 long followRightCloseTime = millis();
@@ -52,6 +52,15 @@ double lastWallError = 0;
 
 //Speedup
 long lastLargeCorrectionMillis = millis();
+double boost_straight = 0.4;
+double boost_turn = 0.3;
+double requiredAvg = 0.9;
+
+// Rolling average
+double avg_history_size = 500;
+int history[500];
+int avg_pointer = 0;
+int avg_sum = 0;
 
 void setup() {
   Serial.begin(230400);
@@ -108,7 +117,49 @@ void loop() {
   double motorLeftOutput = 0;
   double motorRightOutput = 0;
 
-  if(followLine) {
+  // rolling average of right - left
+  int currentMode = 0; // Left: -1, Right: 1
+  if(!lineLeft && !lineMiddle) {
+    currentMode--;
+  }
+  if(lineMiddle) {
+    currentMode++;
+  }
+  avg_sum += currentMode;
+  avg_sum -= history[avg_pointer];
+  history[avg_pointer] = currentMode;
+  if(avg_pointer + 1 >= avg_history_size) {
+    avg_pointer = 0;
+  }
+  else avg_pointer++;
+
+  // naive rolling average of |d(L-r)|
+  double deltaSum = 0;
+  for(int i = 1; i < avg_history_size; i++) {
+    deltaSum += abs(history[i] - history[i-1]);
+  }
+  double deltaTurnAvg = deltaSum / (avg_history_size-1);
+
+  Serial.println(deltaTurnAvg);
+  
+  if(lineLeft && !lineMiddle) {
+    motorLeftOutput = 0.4;
+    motorRightOutput = 0.4;
+//    if(average > requiredAvg) {
+//      motorLeftOutput += boost_straight;
+//      motorRightOutput += boost_straight;
+//    }
+  }
+  else if(lineMiddle) {
+    motorLeftOutput = 0.6;
+    motorRightOutput = -0.6;
+  }
+  else if(!lineLeft && !lineMiddle) {
+    motorLeftOutput = -0.6;
+    motorRightOutput = 0.6;
+  }
+
+  if(followLine && false) {
     if(completedTunnel) {
       if(lineLeftRaw < IR_RED_HIGH_THRESHOLD && lineLeftRaw > IR_RED_LOW_THRESHOLD &&
           lineMiddleRaw < IR_RED_HIGH_THRESHOLD && lineMiddleRaw > IR_RED_LOW_THRESHOLD &&
@@ -275,7 +326,7 @@ void loop() {
       long sweepLeftEndTime = millis() + 500;
       while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);
       while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD) drive(0.3, 0.5);
-      finishedTunnel = true;
+      completedTunnel = true;
       followWall = false;
       followLine = true;
     }
