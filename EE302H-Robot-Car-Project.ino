@@ -27,8 +27,9 @@ int PIN_ANALOG_LINE_LEFT = 3;  // Line IR, Vout
 //  Threshold values for sensors, trial/error defined
 int IR_WALL_THRESHOLD = 200;
 int IR_WALL_NEAR_THRESHOLD = 600;
-int IR_LINE_THRESHOLD = 750;
-int IR_RED_LOW_THRESHOLD = 400;   //TUNE
+int IR_LINE_THRESHOLD = 780;
+int IR_LINE_THRESHOLD_STRICT = 930;
+int IR_RED_LOW_THRESHOLD = 0;   //TUNE
 int IR_RED_HIGH_THRESHOLD = 600;  //TUNE
 
 // Control states
@@ -42,6 +43,7 @@ boolean completedExit2;
 boolean turnedAround;
 boolean completedTunnel;
 boolean followLeft;
+boolean onRed;
 
 long turnWindowCloseTime = millis();
 long followRightCloseTime = millis();
@@ -57,12 +59,12 @@ double boost_straight = 0.2;
 double requiredAvg = 0.9;
 
 // Rolling average
-double avg_history_size = 300;
-int history[300];
+double avg_history_size = 250;
+int history[250];
 int avg_pointer = 0;
 int avg_sum = 0;
 int lastMode = 0;
-int historySum[300];
+int historySum[250];
 
 void setup() {
   Serial.begin(230400);
@@ -92,6 +94,11 @@ void setup() {
 
 void loop() {
   LEDControl();
+
+  if(onRed) {
+    drive(0,0);
+    return;
+  }
   
   //  Read IR sensor values
   float lineLeftRaw = lineLeftRaw * 0. + 1 * analogRead(PIN_ANALOG_LINE_LEFT);
@@ -105,6 +112,9 @@ void loop() {
   bool lineLeft = lineLeftRaw > IR_LINE_THRESHOLD;
   bool lineMiddle = lineMiddleRaw > IR_LINE_THRESHOLD;
   bool lineRight = lineRightRaw > IR_LINE_THRESHOLD;
+  bool lineLeft_strict = lineLeftRaw > IR_LINE_THRESHOLD_STRICT;
+  bool lineMiddle_strict = lineMiddleRaw > IR_LINE_THRESHOLD_STRICT;
+  bool lineRight_strict = lineRightRaw > IR_LINE_THRESHOLD_STRICT;
   bool wallFront = wallFrontRaw > IR_WALL_NEAR_THRESHOLD;
   bool wallLeft = wallLeftRaw > IR_WALL_THRESHOLD;
   bool wallRight = wallRightRaw > IR_WALL_THRESHOLD;
@@ -162,11 +172,16 @@ void loop() {
         if(lineLeftRaw < IR_RED_HIGH_THRESHOLD && lineLeftRaw > IR_RED_LOW_THRESHOLD) red++;
         if(lineMiddleRaw < IR_RED_HIGH_THRESHOLD && lineMiddleRaw > IR_RED_LOW_THRESHOLD) red++;
         if(lineRightRaw < IR_RED_HIGH_THRESHOLD && lineRightRaw > IR_RED_LOW_THRESHOLD) red++;
-        if(red == 3) drive(0,0);
-        else if(red == 2) drive(0.5, 0.2) //TUNE
-      }
+        if(red == 3) {
+          drive(0,0);
+          onRed = true;
+          drive(1,1);
+          delay(300);
+          return;
+        }
+        else if(red == 2) drive(0.5, 0.2); //TUNE
     }
-    if(followRightCloseTime < millis() && followLeftCloseTime < millis() && turnedAround && !completedExit2) {
+    if(followRightCloseTime < millis() && turnedAround && !completedExit2) {
       drive(-0.4, 0.4);
       if(!lineMiddle) return;
       followLeft = true;
@@ -182,11 +197,10 @@ void loop() {
         motorLeftOutput = -0.3;
         motorRightOutput = 0.8;
       }
-      lastLargeCorrectionMillis = millis();
     }
     else {
       
-      if(completedExit2 && wallLeft && wallRight && !lineMiddle && !lineRight && !lineLeft) {
+      if(completedExit2 && wallLeft && wallRight && !lineMiddle && !lineRight && !lineLeft && !completedTunnel) {
         followWall = true;
         followLine = false;
         return;
@@ -220,12 +234,12 @@ void loop() {
       if(!completedExit2 && wallFront && !turnedAround) {
         turnedAround = true;
         Serial.println("Turning around");
-        drive(-0.35, 0.35);
-        delay(300);
+        drive(-0.3, 0.3);
+        delay(500);
         while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) {}
-        drive(0, 0);
+        drive(0,0);
         
-        followRightCloseTime = millis() + 3000;   // TUNE
+        followRightCloseTime = millis() + 1500;   // TUNE
         return;
       }
   
@@ -273,7 +287,6 @@ void loop() {
 //          }
 //        } 
 //      }
-
       if(!followLeft) {
         if(lineLeft && !lineMiddle) {
           motorLeftOutput = 0.24;
@@ -293,17 +306,17 @@ void loop() {
         }
       }
       else {
-        if(lineLeft && !lineMiddle) {
-          motorLeftOutput = -0.6;
-          motorRightOutput = 0.6;
+        if(lineLeft && lineMiddle || lineLeft && !lineMiddle) {
+          motorLeftOutput = -0.5;
+          motorRightOutput = 0.5;
         }
-        else if(lineMiddle) {
-          motorLeftOutput = 0.3;
-          motorRightOutput = 0.3;
+        else if(!lineLeft && lineMiddle) {
+          motorLeftOutput = 0.24;
+          motorRightOutput = 0.24;
         }
         else if(!lineLeft && !lineMiddle) {
-          motorLeftOutput = 0.6;
-          motorRightOutput = -0.6;
+          motorLeftOutput = 0.5;
+          motorRightOutput = -0.5;
         }
       }
       
@@ -329,19 +342,22 @@ void loop() {
 
     LEDFlash(20, 1);
 
-    if(!wallLeft || !wallRight) {
+    if(lineLeft_strict || lineMiddle_strict || lineRight_strict) {
       // sweep left then right until you see the line
-      long sweepLeftEndTime = millis() + 500; //  TUNE
-      while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);  // TUNE
-      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) drive(0.5, 0.3);  // TUNE
+//      long sweepLeftEndTime = millis() + 200; //  TUNE
+//      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD && PIN_ANALOG_LINE_MIDDLE < IR_LINE_THRESHOLD 
+//            && analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, -0.3);  // TUNE
+//      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD && PIN_ANALOG_LINE_MIDDLE < IR_LINE_THRESHOLD 
+//            && analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD) drive(0.5, 0.3);  // TUNE
       completedTunnel = true;
-//      followWall = false;
-//      followLine = true;
+      followWall = false;
+      followLine = true;
+      followLeft = false;
     }
 
     db += "wall\n";
 
-    double baseSpeed = 0.3;
+    double baseSpeed = 0.25;
     motorLeftOutput = baseSpeed;
     motorRightOutput = baseSpeed;
     
