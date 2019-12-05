@@ -26,8 +26,8 @@ int PIN_ANALOG_LINE_LEFT = 3;  // Line IR, Vout
 
 //  Threshold values for sensors, trial/error defined
 int IR_WALL_THRESHOLD = 200;
-int IR_WALL_NEAR_THRESHOLD = 400;
-int IR_LINE_THRESHOLD = 800;
+int IR_WALL_NEAR_THRESHOLD = 600;
+int IR_LINE_THRESHOLD = 750;
 int IR_RED_LOW_THRESHOLD = 400;
 int IR_RED_HIGH_THRESHOLD = 600;
 
@@ -41,6 +41,7 @@ boolean completedExit1;
 boolean completedExit2;
 boolean turnedAround;
 boolean completedTunnel;
+boolean followLeft;
 
 long turnWindowCloseTime = millis();
 long followRightCloseTime = millis();
@@ -52,15 +53,16 @@ double lastWallError = 0;
 
 //Speedup
 long lastLargeCorrectionMillis = millis();
-double boost_straight = 0.4;
-double boost_turn = 0.3;
+double boost_straight = 0.2;
 double requiredAvg = 0.9;
 
 // Rolling average
-double avg_history_size = 500;
-int history[500];
+double avg_history_size = 300;
+int history[300];
 int avg_pointer = 0;
 int avg_sum = 0;
+int lastMode = 0;
+int historySum[300];
 
 void setup() {
   Serial.begin(230400);
@@ -84,6 +86,8 @@ void setup() {
 
   followLine = true;
   followWall = false;
+
+  historySum[0] = 99;
 }
 
 void loop() {
@@ -117,49 +121,42 @@ void loop() {
   double motorLeftOutput = 0;
   double motorRightOutput = 0;
 
-  // rolling average of right - left
-  int currentMode = 0; // Left: -1, Right: 1
-  if(!lineLeft && !lineMiddle) {
-    currentMode--;
-  }
-  if(lineMiddle) {
-    currentMode++;
-  }
-  avg_sum += currentMode;
+  // rolling average
+  int currentMode = 0;
+  if(lineLeft && !lineMiddle) currentMode = 1;
+  else if(!lineLeft && !lineMiddle) currentMode = 2;
+
+  int changed = 0;
+  if(currentMode != lastMode) changed = 1;
+  lastMode = currentMode;
+  
+  avg_sum += changed;
   avg_sum -= history[avg_pointer];
-  history[avg_pointer] = currentMode;
+  if(lineLeft && lineRight && lineMiddle) historySum[0] = 999;
+  
+  history[avg_pointer] = changed;
   if(avg_pointer + 1 >= avg_history_size) {
     avg_pointer = 0;
   }
   else avg_pointer++;
 
-  // naive rolling average of |d(L-r)|
-  double deltaSum = 0;
-  for(int i = 1; i < avg_history_size; i++) {
-    deltaSum += abs(history[i] - history[i-1]);
-  }
-  double deltaTurnAvg = deltaSum / (avg_history_size-1);
+  int lowChange = 999;
+  int highChange = 0;
 
-  Serial.println(deltaTurnAvg);
-  
-  if(lineLeft && !lineMiddle) {
-    motorLeftOutput = 0.4;
-    motorRightOutput = 0.4;
-//    if(average > requiredAvg) {
-//      motorLeftOutput += boost_straight;
-//      motorRightOutput += boost_straight;
-//    }
-  }
-  else if(lineMiddle) {
-    motorLeftOutput = 0.6;
-    motorRightOutput = -0.6;
-  }
-  else if(!lineLeft && !lineMiddle) {
-    motorLeftOutput = -0.6;
-    motorRightOutput = 0.6;
+  for(int i = avg_history_size-1; i >= 0; i--) {
+    if(i == 0) {
+      historySum[i] = avg_sum;
+    }
+    else {
+      historySum[i] = historySum[i-1];
+    }
+    if(historySum[i] < lowChange) lowChange = historySum[i];
+    if(historySum[i] > highChange) highChange = historySum[i];
   }
 
-  if(followLine && false) {
+//  Serial.println(highChange - lowChange);
+
+  if(followLine) {
     if(completedTunnel) {
       if(lineLeftRaw < IR_RED_HIGH_THRESHOLD && lineLeftRaw > IR_RED_LOW_THRESHOLD &&
           lineMiddleRaw < IR_RED_HIGH_THRESHOLD && lineMiddleRaw > IR_RED_LOW_THRESHOLD &&
@@ -168,16 +165,10 @@ void loop() {
       }
     }
     if(followRightCloseTime < millis() && followLeftCloseTime < millis() && turnedAround && !completedExit2) {
-      if(EXIT == 3) {
-        drive(-0.4, 0.4);
-        if(!lineMiddle) return;
-        followLeftCloseTime = millis() + 7000;
-      }
-      else {
-        drive(0.4, -0.4);
-        if(!lineMiddle) return;
-        followRightCloseTime = millis() + 7000;
-      }
+      drive(-0.4, 0.4);
+      if(!lineMiddle) return;
+      followLeft = true;
+        
       completedExit2 = true;
     }
     if(followRightCloseTime > millis()) {
@@ -191,19 +182,9 @@ void loop() {
       }
       lastLargeCorrectionMillis = millis();
     }
-    else if(followLeftCloseTime > millis()) {
-      if(lineMiddle) {
-        motorLeftOutput = -0.3;
-        motorRightOutput = 0.8;
-      }
-      else {
-        motorLeftOutput = 0.8;
-        motorRightOutput = -0.3;
-      }
-      lastLargeCorrectionMillis = millis();
-    }
     else {
-      if(completedExit2 && !lineLeft && !lineMiddle && !lineRight && wallLeft && wallRight) {
+      
+      if(completedExit2 && wallLeft && wallRight && !lineMiddle && !lineRight && !lineLeft) {
         followWall = true;
         followLine = false;
         return;
@@ -234,101 +215,126 @@ void loop() {
         error -= 1;
       }
 
-      if(completedExit1 && !completedExit2 && wallFront && !turnedAround) {
+      if(!completedExit2 && wallFront && !turnedAround) {
         turnedAround = true;
         Serial.println("Turning around");
-        if(EXIT == 3) {
-          drive(-0.35, 0.35);
-          delay(300);
-          while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) {}
-          drive(0, 0);
-          
-          followRightCloseTime = millis() + 2500;
-        }
-        else {
-          drive(0.3, -0.3);
-          delay(300);
-          while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD) {}
-          drive(0, 0);
-          
-          followLeftCloseTime = millis() + 2500;
-        }
+        drive(-0.35, 0.35);
+        delay(300);
+        while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) {}
+        drive(0, 0);
+        
+        followRightCloseTime = millis() + 3000;   // TUNE
         return;
       }
   
-      if(!turnedAround && !completedExit2 && turnWindowCloseTime < millis()) {
-        if(!testingExit && lines == 2) {
-          drive(0.3, 0.3);
-          delay(700);
-          drive(0, 0);
-          testingExit = true;
+//      if(!turnedAround && !completedExit2 && turnWindowCloseTime < millis()) {
+//        if(!testingExit && lines == 2) {
+//          drive(0.3, 0.3);
+//          delay(700);
+//          drive(0, 0);
+//          testingExit = true;
+//        }
+//        else if(testingExit) {
+//          testingExit = false;
+//          if(lines == 0) {
+//            Serial.println("Corner");
+//            drive(-0.3, -0.3);
+//            delay(800);
+//            drive(0, 0);
+//            lastLargeCorrectionMillis = millis();
+//            turnWindowCloseTime = millis() + 1000;
+//            LEDFlash(100, 1);
+//          }
+//          else {
+//            Serial.println("Exit: " + String(currentExit));
+//            currentExit++;
+//            if(currentExit == EXIT) {
+//              LEDFlash(3000, 1);
+//              drive(-0.3, -0.3);
+//              delay(1000);
+//              drive(0, 0);
+//              if(EXIT != 3) {
+//                // exit is A or C, right side
+//                followRightCloseTime = millis() + 3000;
+//                Serial.println("GOING RIGHT");
+//              }
+//              else {
+//                // exit is B, left side
+//                followLeftCloseTime = millis() + 3000;
+//                Serial.println("GOING LEFT");
+//              }
+//              if(!completedExit1) completedExit1 = true; 
+//              else completedExit2 = true;
+//              EXIT += 2;
+//              currentExit = EXIT - 1;
+//            }
+//          }
+//        } 
+//      }
+
+      if(!followLeft) {
+        if(lineLeft && !lineMiddle) {
+          motorLeftOutput = 0.24;
+          motorRightOutput = 0.24;
+          if(highChange - lowChange < 4) {
+            motorLeftOutput += boost_straight;
+            motorRightOutput += boost_straight;
+          }
         }
-        else if(testingExit) {
-          testingExit = false;
-          if(lines == 0) {
-            Serial.println("Corner");
-            drive(-0.3, -0.3);
-            delay(800);
-            drive(0, 0);
-            lastLargeCorrectionMillis = millis();
-            turnWindowCloseTime = millis() + 1000;
-            LEDFlash(100, 1);
-          }
-          else {
-            Serial.println("Exit: " + String(currentExit));
-            currentExit++;
-            if(currentExit == EXIT) {
-              LEDFlash(3000, 1);
-              drive(-0.3, -0.3);
-              delay(1000);
-              drive(0, 0);
-              if(EXIT != 3) {
-                // exit is A or C, right side
-                followRightCloseTime = millis() + 3000;
-                Serial.println("GOING RIGHT");
-              }
-              else {
-                // exit is B, left side
-                followLeftCloseTime = millis() + 3000;
-                Serial.println("GOING LEFT");
-              }
-              if(!completedExit1) completedExit1 = true; 
-              else completedExit2 = true;
-              EXIT += 2;
-              currentExit = EXIT - 1;
-            }
-          }
-        } 
-        
+        else if(lineMiddle) {
+          motorLeftOutput = 0.6;
+          motorRightOutput = -0.6;
+        }
+        else if(!lineLeft && !lineMiddle) {
+          motorLeftOutput = -0.6;
+          motorRightOutput = 0.6;
+        }
       }
-
-      if(lines == 0) {
-        error = 0;
-        lines = 1;
+      else {
+        if(lineLeft && !lineMiddle) {
+          motorLeftOutput = -0.6;
+          motorRightOutput = 0.6;
+        }
+        else if(lineMiddle) {
+          motorLeftOutput = 0.3;
+          motorRightOutput = 0.3;
+        }
+        else if(!lineLeft && !lineMiddle) {
+          motorLeftOutput = 0.6;
+          motorRightOutput = -0.6;
+        }
       }
-      error /= lines;
-  
-      double P = kP * error;
-      double D = kD * (lastLineError - error);
-  
-      double output = P + D;
+      
 
-      motorLeftOutput += -output;
-      motorRightOutput += output;
+//      if(lines == 0) {
+//        error = 0;
+//        lines = 1;
+//      }
+//      error /= lines;
+//  
+//      double P = kP * error;
+//      double D = kD * (lastLineError - error);
+//  
+//      double output = P + D;
+//
+//      motorLeftOutput += -output;
+//      motorRightOutput += output;
   
-      if(abs(error) < 1 && abs(error) > 0) lastLargeCorrectionMillis = millis();
+//      if(abs(error) < 1 && abs(error) > 0) lastLargeCorrectionMillis = millis();
     }
   }
   else if(followWall) {
 
+    LEDFlash(20, 1);
+
     if(!wallLeft || !wallRight) {
       // sweep left then right until you see the line
       long sweepLeftEndTime = millis() + 500;
-      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);
-      while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD) drive(0.3, 0.5);
+      while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);
+      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) drive(0.5, 0.3);
       completedTunnel = true;
-      followWall = false;
-      followLine = true;
+//      followWall = false;
+//      followLine = true;
     }
 
     db += "wall\n";
