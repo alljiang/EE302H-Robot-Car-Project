@@ -28,8 +28,8 @@ int PIN_ANALOG_LINE_LEFT = 3;  // Line IR, Vout
 int IR_WALL_THRESHOLD = 200;
 int IR_WALL_NEAR_THRESHOLD = 600;
 int IR_LINE_THRESHOLD = 750;
-int IR_RED_LOW_THRESHOLD = 400;
-int IR_RED_HIGH_THRESHOLD = 600;
+int IR_RED_LOW_THRESHOLD = 400;   //TUNE
+int IR_RED_HIGH_THRESHOLD = 600;  //TUNE
 
 // Control states
 boolean followLine;  // follows line if true, follows wall otherwise
@@ -158,10 +158,12 @@ void loop() {
 
   if(followLine) {
     if(completedTunnel) {
-      if(lineLeftRaw < IR_RED_HIGH_THRESHOLD && lineLeftRaw > IR_RED_LOW_THRESHOLD &&
-          lineMiddleRaw < IR_RED_HIGH_THRESHOLD && lineMiddleRaw > IR_RED_LOW_THRESHOLD &&
-          lineRightRaw < IR_RED_HIGH_THRESHOLD && lineRightRaw > IR_RED_LOW_THRESHOLD) {
-          drive(0,0);
+        int red = 0;
+        if(lineLeftRaw < IR_RED_HIGH_THRESHOLD && lineLeftRaw > IR_RED_LOW_THRESHOLD) red++;
+        if(lineMiddleRaw < IR_RED_HIGH_THRESHOLD && lineMiddleRaw > IR_RED_LOW_THRESHOLD) red++;
+        if(lineRightRaw < IR_RED_HIGH_THRESHOLD && lineRightRaw > IR_RED_LOW_THRESHOLD) red++;
+        if(red == 3) drive(0,0);
+        else if(red == 2) drive(0.5, 0.2) //TUNE
       }
     }
     if(followRightCloseTime < millis() && followLeftCloseTime < millis() && turnedAround && !completedExit2) {
@@ -329,9 +331,9 @@ void loop() {
 
     if(!wallLeft || !wallRight) {
       // sweep left then right until you see the line
-      long sweepLeftEndTime = millis() + 500;
-      while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);
-      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) drive(0.5, 0.3);
+      long sweepLeftEndTime = millis() + 500; //  TUNE
+      while(analogRead(PIN_ANALOG_LINE_RIGHT) < IR_LINE_THRESHOLD && millis() < sweepLeftEndTime) drive(0.3, 0.5);  // TUNE
+      while(analogRead(PIN_ANALOG_LINE_LEFT) < IR_LINE_THRESHOLD) drive(0.5, 0.3);  // TUNE
       completedTunnel = true;
 //      followWall = false;
 //      followLine = true;
